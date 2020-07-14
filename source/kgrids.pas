@@ -1333,31 +1333,32 @@ type
   TKGridAxisItems = class(TOwnedCollection)
   private
     FGrid: TKCustomGrid;
-    function GetItem(Index: Integer): TKGridAxisItem;
-    procedure SetItem(Index: Integer; Value: TKGridAxisItem);
   protected
-    function GetOwner: TPersistent; override;
+    function  GetItem(Index: Integer): TKGridAxisItem; virtual;
+    procedure SetItem(Index: Integer; Value: TKGridAxisItem); virtual;
+    function  GetOwner: TPersistent; override;
     procedure Update(Item: TCollectionItem); override;
   public
+    function  Count:Integer; virtual;
     { Creates the instance. Do not create custom instances. All necessary
       TKGridAxisItems instances are created automatically by TKCustomGrid. }
     constructor Create(Grid: TKCustomGrid; AClass: TCollectionItemClass);
     { Adds new item to this collection by updating the grid. }
     function Add: TKGridAxisItem; virtual;
     { Adds new item only to this collection. }
-    function AddOnly: TKGridAxisItem;
+    function AddOnly: TKGridAxisItem; virtual;
     { Clears all items. }
     procedure Clear; virtual;
     { Deletes existing item by updating the grid. }
     procedure Delete(Index: Integer); virtual;
     { Deletes existing item only from this collection. }
-    procedure DeleteOnly(Index: Integer);
+    procedure DeleteOnly(Index: Integer); virtual;
     { Exchange two items. }
     procedure Exchange(Index1, Index2: Integer); virtual;
     { Adds new item to this collection by updating the grid. }
     function Insert(At: Integer): TKGridAxisItem; virtual;
     { Adds new item only to this collection. }
-    function InsertOnly(At: Integer): TKGridAxisItem;
+    function InsertOnly(At: Integer): TKGridAxisItem; virtual;
     { References parent dbgrid. }
     property Grid: TKCustomGrid read FGrid;
     { References items. }
@@ -4334,6 +4335,11 @@ end;
 
 { TKGridAxisItems }
 
+function TKGridAxisItems.Count:Integer;
+begin
+ Result:=inherited;
+end;
+
 constructor TKGridAxisItems.Create(Grid: TKCustomGrid; AClass: TCollectionItemClass);
 begin
   inherited Create(FGrid, AClass);
@@ -4384,18 +4390,8 @@ begin
 end;
 
 procedure TKGridAxisItems.Exchange(Index1, Index2: Integer);
-var
-  Item: TKGridAxisItem;
 begin
-  // there is no exchange method in TCollection, grrr
-  Item := TKGridAxisItem(ItemClass.Create(nil));
-  try
-    Item.Assign(Items[Index1]);
-    Items[Index1] := Items[Index2];
-    Items[Index2] := Item;
-  finally
-    Item.Free;
-  end;
+ inherited Exchange(Index1,Index2);
 end;
 
 function TKGridAxisItems.GetItem(Index: Integer): TKGridAxisItem;
@@ -4991,27 +4987,30 @@ begin
   begin
     // invalidate cell, iterate only visible cells in a fast way
     Cells := FGrid.ArrayOfCells;
-    Info := FGrid.GetAxisInfoBoth([]);
-    I := 0; HExtent := 0;
-    while (I < Info.Horz.TotalCellCount) and (HExtent < Info.Horz.ClientExtent) do
+    if Assigned(Cells) then
     begin
-      if I = Info.Horz.FixedCellCount then
-        I := Info.Horz.FirstGridCell; // switch to first visible nonfixed cell
-      J := 0; VExtent := 0;
-      while (J < Info.Vert.TotalCellCount) and (VExtent < Info.Vert.ClientExtent) do
-      begin
-        if J = Info.Vert.FixedCellCount then
-          J := Info.Vert.FirstGridCell; // switch to first visible nonfixed cell
-        if Cells[J, I] = Self then
-        begin
-          FGrid.InvalidateCell(I, J);
-          Exit;
-        end;
-        Inc(VExtent, Info.Vert.CellExtent(J) + Info.Vert.EffectiveSpacing(J));
-        Inc(J);
-      end;
-      Inc(HExtent, Info.Horz.CellExtent(I) + Info.Horz.EffectiveSpacing(I));
-      Inc(I);
+     Info := FGrid.GetAxisInfoBoth([]);
+     I := 0; HExtent := 0;
+     while (I < Info.Horz.TotalCellCount) and (HExtent < Info.Horz.ClientExtent) do
+     begin
+       if I = Info.Horz.FixedCellCount then
+         I := Info.Horz.FirstGridCell; // switch to first visible nonfixed cell
+       J := 0; VExtent := 0;
+       while (J < Info.Vert.TotalCellCount) and (VExtent < Info.Vert.ClientExtent) do
+       begin
+         if J = Info.Vert.FixedCellCount then
+           J := Info.Vert.FirstGridCell; // switch to first visible nonfixed cell
+         if Cells[J, I] = Self then
+         begin
+           FGrid.InvalidateCell(I, J);
+           Exit;
+         end;
+         Inc(VExtent, Info.Vert.CellExtent(J) + Info.Vert.EffectiveSpacing(J));
+         Inc(J);
+       end;
+       Inc(HExtent, Info.Horz.CellExtent(I) + Info.Horz.EffectiveSpacing(I));
+       Inc(I);
+     end;
     end;
   end;
 end;
@@ -6740,13 +6739,15 @@ end;
 function TKCustomGrid.CellToPoint(ACol, ARow: Integer; var Point: TPoint; 
   VisibleOnly: Boolean): Boolean;
 
-  function Axis(const Info: TKGridAxisInfo; Cell: Integer; out Coord: Integer): Boolean;
+  function Axis(const Info:TKGridAxisInfo;Cell,ScrollPos:Integer;out Coord: Integer): Boolean;
   var
     I: Integer;
   begin
     Result := False;
     if (Cell >= 0) and (Cell < Info.TotalCellCount) then
     begin
+
+
       I := 0;
       Coord := 0;
       while (I < Cell) and (I < Info.FixedCellCount) and (not VisibleOnly or (Coord < Info.ClientExtent)) do
@@ -6754,21 +6755,41 @@ function TKCustomGrid.CellToPoint(ACol, ARow: Integer; var Point: TPoint;
         Inc(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
         Inc(I);
       end;
+
       if not VisibleOnly or (Coord < Info.ClientExtent) then
       begin
         if I = Info.FixedCellCount then
         begin
-          Dec(Coord, Info.ScrollOffset);
-          I := Info.FirstGridCell;
-          while not VisibleOnly and (Cell < I) and (I > Info.FixedCellCount) do
+
+          if VisibleOnly then
           begin
-            Dec(I);
-            Dec(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
-          end;
-          while (I < Cell) and (I < Info.TotalCellCount) and (not VisibleOnly or (Coord < Info.ClientExtent)) do
+            if (Cell-Info.FirstGridCell>=0) then
+            begin
+             Dec(Coord, Info.ScrollOffset);
+             I:=Info.FirstGridCell;
+             while (I<Cell) and (I<Info.TotalCellCount) and (Coord<Info.ClientExtent) do
+             begin
+              Inc(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
+              Inc(I);
+             end;
+            end else
+            begin
+             i:=Cell;
+             Dec(Coord,Info.ScrollOffset);
+             Dec(I);
+             Dec(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
+            end;
+          end else
           begin
-            Inc(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
-            Inc(I);
+           Coord:=Coord-ScrollPos-Info.ScrollOffset;
+           I:=Min(Info.FixedCellCount,Cell);
+
+           while (I < Cell) and (I < Info.TotalCellCount) do
+           begin
+             Inc(Coord, Info.CellExtent(I) + Info.EffectiveSpacing(I));
+             Inc(I);
+           end;
+
           end;
         end;
         Result := Cell = I;
@@ -6785,9 +6806,8 @@ function TKCustomGrid.CellToPoint(ACol, ARow: Integer; var Point: TPoint;
 begin
   if ColValid(ACol) and RowValid(ARow) then
   begin
-    Result := Axis(GetAxisInfoHorz([]), ACol, Point.X);
-    if Result then
-      Result := Axis(GetAxisInfoVert([]), ARow, Point.Y);
+    Result := Axis(GetAxisInfoHorz([]), ACol,FScrollPos.X, Point.X);
+    if Result then Result := Axis(GetAxisInfoVert([]), ARow,FScrollPos.Y, Point.Y);
   end else
     Result := False;
 end;
@@ -8523,7 +8543,7 @@ end;
 function TKCustomGrid.InternalGetSelectionRect(const ARect: TKGridRect): TRect;
 begin
   Result := CreateEmptyRect;
-  if GridRectToRect(ARect, Result, False, goRangeSelect in FOptions) then
+  if GridRectToRect(ARect, Result, True, goRangeSelect in FOptions) then
   begin
     if FOptions * [goFixedHorzLine, goHorzLine] = [goFixedHorzLine, goHorzLine] then
       Dec(Result.Bottom, GetEffectiveRowSpacing(Max(ARect.Row1, ARect.Row2)));
@@ -8538,9 +8558,12 @@ var
 begin
   SelectionIndex := FindSelection(ACol, ARow);
   if SelectionIndex >= 0 then
-    Result := SelectionsRect[SelectionIndex]
-  else
-    Result := SelectionRect;
+  begin
+   Result := SelectionsRect[SelectionIndex];
+  end else
+  begin
+   Result := SelectionRect;
+  end;
 end;
 
 function TKCustomGrid.GetSelection: TKGridRect;
@@ -8722,6 +8745,7 @@ begin
       end;
     end;
   end;
+
 end;
 
 function TKCustomGrid.GridRectValid(const ARect: TKGridRect): Boolean;
@@ -10808,6 +10832,7 @@ var
   Span: TKGridCellSpan;
   BorderRect, CellRect, TmpRect, TmpBlockRect: TRect;
   TmpCanvas: TCanvas;
+
 begin
   GridFocused := Printing or HasFocus;
   UseThemedCells := ThemedCells;
@@ -10851,6 +10876,7 @@ begin
     Dec(FirstRow);
     Dec(YBack, InternalGetRowHeights(FirstRow) + InternalGetEffectiveRowSpacing(FirstRow));
   end;
+
   // now draw the grid
   Y := YBack;
   I := FirstRow;
@@ -10860,6 +10886,7 @@ begin
     VExtent := InternalGetRowHeights(I);
     VSpacing := InternalGetEffectiveRowSpacing(I);
     J := FirstCol;
+
     while (J <= LastCol) and (X <= MaxX) do
     begin
       HExtent := InternalGetColWidths(J);
@@ -10867,6 +10894,7 @@ begin
       Span := InternalGetCellSpan(J, I);
       if (Span.ColSpan > 0) and (Span.RowSpan > 0) then
       begin
+
         InternalGetHExtent(J, Span.ColSpan, CHExtent, CHSpacing);
         InternalGetVExtent(I, Span.RowSpan, CVExtent, CVSpacing);
         CellRect := Rect(X, Y, X + CHExtent, Y + CVExtent);
@@ -10874,6 +10902,7 @@ begin
         Inc(BorderRect.Bottom, CVSpacing);
         Inc(BorderRect.Right, CHSpacing);
         TmpRect := BorderRect;
+
         if not Printing then
           TranslateRectToDevice(ACanvas.Handle, TmpRect);
         if Printing or RectInRegion(MainClipRgn, TmpRect) then
@@ -10881,6 +10910,7 @@ begin
           if (CHExtent > 0) and (CVExtent > 0) then
           begin
             CellState := GetDrawState(J, I, GridFocused);
+
             if Printing then
             begin
               CellState := CellState - [gdEdited, gdMouseDown, gdMouseOver];
@@ -10923,7 +10953,9 @@ begin
               end else
                 CellRect.Right := BorderRect.Right;
             end;
+
             TmpBlockRect := InternalGetSelectionsRect(J, I);
+
             if CellBitmap <> nil then
             begin
               TmpRect := Rect(0, 0, CellRect.Right - CellRect.Left, CellRect.Bottom - CellRect.Top);
@@ -10944,6 +10976,7 @@ begin
             InternalPaintCell(J, I, CellState, TmpRect, TmpBlockRect, TmpCanvas, ClipCells, Printing);
             if CellBitmap <> nil then
               CellBitmap.DrawTo(ACanvas, CellRect);
+
           end
           else if goIndicateHiddenCells in FOptions then
           begin
@@ -10982,6 +11015,7 @@ begin
       Inc(X, HExtent + HSpacing);
       Inc(J);
     end;
+
     Inc(Y, VExtent + VSpacing);
     Inc(I);
   end;
@@ -11256,7 +11290,9 @@ var
   DC: HDC;
   CellBitmap: TKAlphaBitmap;
   Info: TKGridAxisInfoBoth;
+
 begin
+
   DC := ACanvas.Handle;
   SaveIndex := SaveDC(DC); // don't delete
   try
@@ -11284,6 +11320,7 @@ begin
         TranslateRectToDevice(DC, TmpRect);
         MainClipRgn := CreateRectRgnIndirect(TmpRect);
       end;
+
       // draw clipped selectable cells first (to avoid some GTK clipping problems)
       TmpRect := Rect(Info.Horz.FixedBoundary, Info.Vert.FixedBoundary, ClientW, ClientH);
       if not IsRectEmpty(TmpRect) then
@@ -11300,6 +11337,9 @@ begin
           DeleteObject(CurClipRgn);
         end;
       end;
+
+
+
       GridW := Max(GridW, TmpExtent.X); GridH := Max(GridH, TmpExtent.Y);
       // clipped fixed rows
       TmpRect := Rect(Info.Horz.FixedBoundary, 0, ClientW, Info.Vert.FixedBoundary);
@@ -11432,6 +11472,7 @@ function TKCustomGrid.PointToCell(Point: TPoint; OutSide: Boolean;
       begin
         // check visible cells and invisible ones to the right or bottom
         PtBegin := PtEOFixed;
+
         while (I < Info.TotalCellCount) and (Result < 0) do
         begin
           PtEnd := PtBegin + Info.CellExtent(I) + Info.EffectiveSpacing(I);
@@ -12278,7 +12319,7 @@ begin
       finally
         FlagClear(cGF_GridUpdates);
       end;
-      UpdateAxes(True, Index, False, cAll, [afCallEvent, afCheckMinExtent]);
+      UpdateAxes(True, Index, False, cAll, [afCallEvent{, afCheckMinExtent}]);
     end;
   end;
 end;
@@ -13103,6 +13144,7 @@ var
   Info: TKGridAxisInfo;
 begin
   if not UpdateUnlocked then Exit;
+
   if Horz then
   begin
     Info := GetAxisInfoHorz([]);
@@ -13135,7 +13177,8 @@ begin
       Axis2(Info, FRows, RowIndex);
     end;
   end;
-  UpdateScrollRange(Horz, Vert, False);
+
+  UpdateScrollRange({Horz}false, {Vert}false, False);
   UpdateEditor(Flag(cGF_EditorModeActive));
   if Horz then
   begin
@@ -13400,6 +13443,7 @@ procedure TKCustomGrid.UpdateScrollRange(Horz, Vert, UpdateNeeded: Boolean);
     SI: TScrollInfo;
     SBVisible: Boolean;
   begin
+
     Result := False;
     CheckFirstGridCell := True;
     ScrollExtent := 0;
@@ -13460,6 +13504,7 @@ procedure TKCustomGrid.UpdateScrollRange(Horz, Vert, UpdateNeeded: Boolean);
         end;
       end else
         ShowScrollBar(Handle, Code, False);
+
   end;
 
 var
@@ -13498,7 +13543,7 @@ end;
 procedure TKCustomGrid.UpdateSize;
 begin
   inherited;
-  UpdateAxes(True, FColCount, True, FRowCount, [afCheckMinExtent]);
+  UpdateAxes(True, FColCount, True, FRowCount, [{afCheckMinExtent}]);
 end;
 
 procedure TKCustomGrid.UpdateSortMode(ACol, ARow: Integer);
